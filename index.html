@@ -1,0 +1,2276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>POETRY</title>
+  <style>
+    :root {
+      --bg: #f2f2f2;
+      --text: #1a1a1a;
+      --header-bg: rgba(242, 242, 242, 0.88);
+      --card-bg: #ffffff;
+      --card-border: rgba(0, 0, 0, 0.06);
+      --shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0a0a0a;
+        --text: #f0f0f0;
+        --header-bg: rgba(10, 10, 10, 0.88);
+        --card-bg: #1a1a1a;
+        --card-border: rgba(255, 255, 255, 0.06);
+        --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+      }
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html {
+      height: 100%;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100%;
+      transition: background-color 0.4s ease, color 0.4s ease;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: pan-y;
+    }
+
+    /* Fixed header - NO bottom line/border */
+    .header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 24px;
+      text-align: center;
+      background: var(--header-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    .header h1 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 5px;
+      color: var(--text);
+    }
+
+    /* Scroll container */
+    .feed {
+      padding-top: 64px;
+      padding-bottom: 40px;
+      padding-left: 20px;
+      padding-right: 20px;
+    }
+
+    /* Each stack group */
+    .group {
+      display: flex;
+      justify-content: center;
+      padding: 10px 0;
+    }
+
+    .stack {
+      position: relative;
+      display: block;
+      /* 手机端（<768px）：最终会被 JS 写像素 width/height 覆盖，这里只做首帧兜底。
+         电脑端（≥768px）：JS 不写内联，完全依赖 CSS aspect-ratio + CSS columns 多列布局。 */
+      width: 100%;
+      max-width: 360px;
+      max-height: none;
+      aspect-ratio: 2 / 3;
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+     *  电脑端：单列 → 多列瀑布流（参考小红书 / Pinterest 样式）
+     *  手机端严禁改动：下面所有规则都包在 @media (min-width: 768px) 里，
+     *  手机视口不会命中任何一条，布局和交互 100% 保持原样。
+     * ══════════════════════════════════════════════════════════════ */
+    @media (min-width: 768px) {
+      .feed {
+        /* 左右留白更宽，整屏居中，避免超宽屏无限拉伸 */
+        max-width: 1440px;
+        margin: 0 auto;
+        padding-left: 48px;
+        padding-right: 48px;
+        padding-top: 80px;
+        padding-bottom: 80px;
+
+        /* 768~1199 显示 3 列，≥1200 显示 4 列 —— 和参考图一致的瀑布流 */
+        column-count: 3;
+        column-gap: 28px;
+      }
+
+      @media (min-width: 1200px) {
+        .feed {
+          column-count: 4;
+          column-gap: 32px;
+        }
+      }
+
+      .group {
+        /* 关键：不让一组（含同组 2~3 张堆栈 + 外间距）被 columns 折断跨列显示 */
+        break-inside: avoid;
+        page-break-inside: avoid;
+        -webkit-column-break-inside: avoid;
+        /* 不再 flex 居中（单列时才需要），瀑布流时直接占满每列宽度 */
+        display: block;
+        padding: 0 0 32px;
+      }
+
+      .stack {
+        /* 电脑端撑满每列宽度，不再受手机端 360px 上限卡死 */
+        max-width: none;
+        /* 高度按内联 style.aspect-ratio（每组自己的真实比例）自动算 */
+      }
+
+      /* ══════════════════════════════════════════════════════════════
+       *  电脑端 hover 才展开堆栈：
+       *    · 默认（未悬停）：.l1/.l2/.l3 全部缩回和 .l0 完全重合 + opacity=0，
+       *      视觉上只剩 1 张图，看起来像整齐的卡片网格。
+       *    · 鼠标悬停在 .group 上：恢复原堆栈的错位偏移 + 暗化 + 透明度，
+       *      300ms 平滑过渡，符合「放上去才露堆栈」的交互预期。
+       *    · 手机端 <768px：此 @media 不命中，.l1/.l2 默认始终展开，
+       *      用户一眼看到有好几层可以左右划，完全不变。
+       * ══════════════════════════════════════════════════════════════ */
+      .stack .card.l1,
+      .stack .card.l2,
+      .stack .card.l3 {
+        transition:
+          transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+          filter 280ms ease,
+          opacity 260ms ease;
+      }
+
+      .stack .card.l1 {
+        transform: translate(0, 0) scale(1);
+        filter: brightness(1);
+        opacity: 0;
+      }
+
+      .stack .card.l2 {
+        transform: translate(0, 0) scale(1);
+        filter: brightness(1);
+        opacity: 0;
+      }
+
+      .stack .card.l3 {
+        transform: translate(0, 0) scale(1);
+        filter: brightness(1);
+        opacity: 0;
+      }
+
+      /* hover 时恢复原堆栈层级 */
+      .group:hover .stack .card.l1 {
+        transform: translate(18px, 10px) scale(0.95);
+        filter: brightness(0.78);
+        opacity: 0.90;
+      }
+
+      .group:hover .stack .card.l2 {
+        transform: translate(34px, 20px) scale(0.89);
+        filter: brightness(0.58);
+        opacity: 0.72;
+      }
+
+      .group:hover .stack .card.l3 {
+        transform: translate(46px, 26px) scale(0.85);
+        filter: brightness(0.35);
+        opacity: 0;
+        /* 最底层本来就是半透明虚影，hover 时保持一致 */
+      }
+    }
+
+
+    /*
+     * 卡片尺寸：直接用 width/height:100%。
+     *
+     * 为什么不用四边定位(top/left/right/bottom:0)+auto？
+     *   因为在微信X5里，如果父容器用了 height:0 + padding-top 的黑科技，
+     *   X5 会在「宽度」计算上犯迷糊：它算出来的 card 宽度比实际容器窄，
+     *   导致 object-fit:cover 把图片左右裁得很紧（图1 vs 图2 的宽度差）。
+     * 改成 width:100%; height:100%; 加上下面 ResizeObserver 动态给父级 .stack
+     * 设置实际像素 height，就能 100% 精确对齐，两边浏览器都一致。
+     */
+    .card {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 14px;
+      overflow: hidden;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      box-shadow: var(--shadow);
+      pointer-events: none;
+      will-change: transform, opacity;
+    }
+
+    .card.active {
+      pointer-events: auto;
+      cursor: grab;
+    }
+
+    .card.active:active {
+      cursor: grabbing;
+    }
+
+    .card img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      /* ★ 单击图片放大灯箱：必须接收点击，不再 pointer-events: none
+         同时保留无拖拽 / 无长按系统菜单 / 无选中，不影响滑动手势 */
+      pointer-events: auto;
+      cursor: zoom-in;
+      user-select: none;
+      -webkit-user-drag: none;
+      -webkit-touch-callout: none;
+    }
+
+    /* Stack layers - offset to the RIGHT to show stacking */
+    .card.l0 {
+      transform: translate(0, 0) scale(1);
+      z-index: 10;
+      filter: brightness(1);
+      opacity: 1;
+    }
+
+    .card.l1 {
+      transform: translate(18px, 10px) scale(0.95);
+      z-index: 9;
+      filter: brightness(0.78);
+      opacity: 0.90;
+    }
+
+    .card.l2 {
+      transform: translate(34px, 20px) scale(0.89);
+      z-index: 8;
+      filter: brightness(0.58);
+      opacity: 0.72;
+    }
+
+    .card.l3 {
+      transform: translate(46px, 26px) scale(0.85);
+      z-index: 7;
+      filter: brightness(0.35);
+      opacity: 0;
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       关灯箱时的「无缝升顶」过渡：
+       · 灯箱放大图飞回（0.35s）的同一时刻，stack 里所有卡片也一起平滑
+         重排到新层级（例如第 3 张从底下 l2 位置升上来变成顶层 l0）。
+       · 只在 closeLightbox 调用瞬间临时给 stack 加 is-syncing，
+         动画结束后立刻移除，不影响正常的左右滑动动画。
+       ══════════════════════════════════════════════════════════════ */
+    .stack.is-syncing .card {
+      transition:
+        transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+        filter 0.35s ease,
+        opacity 0.35s ease,
+        box-shadow 0.35s ease;
+    }
+
+    /* Swipe animations */
+    .card.swipe-out-left {
+      transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.55s ease !important;
+      transform: translate(-120%, 20px) rotate(-10deg) scale(0.92) !important;
+      opacity: 0 !important;
+    }
+
+    .card.swipe-out-right {
+      transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.55s ease !important;
+      transform: translate(120%, 20px) rotate(10deg) scale(0.92) !important;
+      opacity: 0 !important;
+    }
+
+    /* Dragging state */
+    .card.dragging {
+      transition: none !important;
+    }
+
+    /* Desktop */
+    @media (min-width: 768px) {
+      .header h1 {
+        font-size: 32px;
+        letter-spacing: 7px;
+      }
+
+      .feed {
+        padding-top: 90px;
+        padding-bottom: 80px;
+      }
+
+      .stack {
+        max-width: 360px;
+      }
+
+      .group {
+        padding: 20px 0;
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+     * 点击放大灯箱（毛玻璃背景 + 点击图片从原位放大到全屏）
+     * ══════════════════════════════════════════════════════════════ */
+
+    /* 毛玻璃遮罩 —— 背景层模糊（整层覆盖当前页面内容）*/
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 99999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      /* 两层底色兜底：先半透明黑 → 再叠 backdrop-filter 毛玻璃
+         老设备不支持 backdrop-filter 时至少有半透明黑可用 */
+      background-color: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(26px) saturate(1.4);
+      -webkit-backdrop-filter: blur(26px) saturate(1.4);
+      cursor: zoom-out;
+      opacity: 0;
+      /* 毛玻璃淡入和图片放大保持同样的时长，视觉上浑然一体 */
+      transition: opacity 0.38s ease;
+      will-change: opacity;
+    }
+
+    .lightbox.is-open {
+      display: flex;
+      opacity: 1;
+    }
+
+    @media (prefers-color-scheme: light) {
+      .lightbox {
+        background-color: rgba(255, 255, 255, 0.42);
+      }
+    }
+
+    /* 图片本体 —— 用 contain 保证整图完整看到，不留裁边 */
+    .lightbox-img {
+      max-width: 92vw;
+      max-height: 88vh;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      display: block;
+      border-radius: 14px;
+      box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.35),
+        0 4px 16px rgba(0, 0, 0, 0.18);
+      transform-origin: center center;
+      will-change: transform, opacity;
+      -webkit-user-drag: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      pointer-events: none;
+      /* 点击图片=点到遮罩，直接关，不用再区分点图还是点背景 */
+    }
+
+    /* 关闭按钮（右上角 X）—— 手机主要靠点空白关，但桌面端用户习惯找 X */
+    .lightbox-close {
+      position: absolute;
+      top: max(env(safe-area-inset-top, 0px), 16px);
+      right: 18px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: #fff;
+      font-size: 22px;
+      line-height: 38px;
+      cursor: pointer;
+      z-index: 1;
+      padding: 0;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lightbox-close::before,
+    .lightbox-close::after {
+      content: '';
+      position: absolute;
+      width: 18px;
+      height: 2px;
+      background: currentColor;
+      border-radius: 2px;
+    }
+
+    .lightbox-close::before {
+      transform: rotate(45deg);
+    }
+
+    .lightbox-close::after {
+      transform: rotate(-45deg);
+    }
+
+    @media (prefers-color-scheme: light) {
+      .lightbox-close {
+        background: rgba(0, 0, 0, 0.12);
+        color: #111;
+      }
+    }
+
+    /* 打开动画：从被点中的那张小图「飞过来放大」的 FLIP 效果
+       —— 全程 opacity=1，所以用户看到的是那张图自己逐渐放大，没有淡入淡出的断层感。
+       等大图 ready 了才启动过渡，避免"白一下再动"。 */
+    .lightbox-img.is-animating {
+      transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .lightbox-img.is-animating.is-closing {
+      transition: transform 0.34s cubic-bezier(0.4, 0, 0.84, 0.42);
+    }
+
+    /* 左右切换箭头（桌面端明显，手机端也能点）*/
+    .lightbox-prev,
+    .lightbox-next {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: #fff;
+      cursor: pointer;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: transform 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .lightbox-prev {
+      left: calc(env(safe-area-inset-left, 0px) + 14px);
+    }
+
+    .lightbox-next {
+      right: calc(env(safe-area-inset-right, 0px) + 14px);
+    }
+
+    .lightbox-prev:hover,
+    .lightbox-next:hover {
+      background: rgba(255, 255, 255, 0.28);
+      transform: translateY(-50%) scale(1.05);
+    }
+
+    .lightbox-prev:active,
+    .lightbox-next:active {
+      transform: translateY(-50%) scale(0.94);
+    }
+
+    /* 箭头用 CSS pseudo 画 < 和 >，不依赖图标库 */
+    .lightbox-prev::before,
+    .lightbox-next::before {
+      content: '';
+      width: 12px;
+      height: 12px;
+      border-top: 2.5px solid currentColor;
+      border-right: 2.5px solid currentColor;
+      border-radius: 2px;
+    }
+
+    .lightbox-prev::before {
+      transform: rotate(-135deg);
+      margin-left: 4px;
+    }
+
+    /* <  */
+    .lightbox-next::before {
+      transform: rotate(45deg);
+      margin-right: 4px;
+    }
+
+    /* >  */
+
+    @media (prefers-color-scheme: light) {
+
+      .lightbox-prev,
+      .lightbox-next {
+        background: rgba(0, 0, 0, 0.12);
+        color: #111;
+      }
+
+      .lightbox-prev:hover,
+      .lightbox-next:hover {
+        background: rgba(0, 0, 0, 0.22);
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       手机端隐藏箭头 + 关闭按钮（用户要求：手机端保持干净，全靠手势操作）
+       桌面端（≥768px）保留按钮：电脑用户习惯找 ◀ ▶ ✕ 操作
+       ══════════════════════════════════════════════════════════════ */
+    @media (max-width: 767px) {
+
+      .lightbox-prev,
+      .lightbox-next,
+      .lightbox-close {
+        display: none !important;
+      }
+    }
+
+    /* 底部图片计数器（如「1 / 3」），手机端主要靠它知道一组有多少张 */
+    .lightbox-counter {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: max(env(safe-area-inset-bottom, 0px), 24px);
+      text-align: center;
+      color: #fff;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      z-index: 1;
+      pointer-events: none;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      opacity: 0.85;
+    }
+
+    @media (prefers-color-scheme: light) {
+      .lightbox-counter {
+        color: #111;
+        text-shadow: 0 2px 6px rgba(255, 255, 255, 0.5);
+      }
+    }
+
+    /* 灯箱内切换图片的过渡：
+       下一张(dr=+1) → 旧图往左飞出、新图从右飞入
+       上一张(dr=-1) → 旧图往右飞出、新图从左飞入  */
+    .lightbox-img.is-switching {
+      /* 切换时单独加一条 transition，时长比 FLIP 短一点，显得更跟手 */
+      transition:
+        transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 0.24s ease;
+    }
+
+    /* 灯箱打开时，锁定 body 滚动，否则遮罩层出来用户还能滑底下页面 */
+    body.lightbox-open {
+      overflow: hidden;
+      touch-action: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header class="header">
+    <h1>POETRY</h1>
+  </header>
+
+  <main class="feed" id="feed"></main>
+
+  <script>
+    (function () {
+      // ★★★ 替换图片：改这里 ★★★
+      // 两种写法均可混用：
+      //   写法1（默认比例）：['url1', 'url2', 'url3']
+      //   写法2（自定义比例）：{ ratio: '1 / 1', images: ['url1', 'url2'] }
+      // ratio 示例：'3 / 4' 竖图、'16 / 9' 横图、'1 / 1' 方图、'4 / 5' 社交竖图
+      // 不写 ratio 的组会用 CSS 里的默认比例（见上方 .stack 的 aspect-ratio）
+      const groups = [
+        {
+          ratio: '2 / 3',
+          images: [
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/03/10000483624929818207381761555-1015x1536.jpg',
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/03/10000473931589208117442651858-768x1536.jpg'
+          ]
+        },
+        {
+          ratio: '2 / 3',
+          images: [
+            'https://www.poetryportfolio.icu/wp-content/uploads/2024/09/777-1870x2805.jpg',
+            'https://www.poetryportfolio.icu/wp-content/uploads/2024/09/freecompress-IMG_0117-%E5%B7%B2%E5%A2%9E%E5%BC%BA-%E9%99%8D%E5%99%AA-1-1870x2805.jpg'
+          ]
+        },
+        {
+          ratio: '3 / 2',
+          images: [
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/01/dsc43975226011635270803790.jpg',
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/01/dsc44028487228886147893700-1536x1024.jpg',
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/01/dsc44019117375999926419389-1536x1024.jpg'
+          ]
+        },
+        [
+          'https://www.poetryportfolio.icu/wp-content/uploads/2024/09/DSC_2105-%E5%B7%B2%E5%A2%9E%E5%BC%BA-%E9%99%8D%E5%99%AA-scaled.jpg',
+          'https://www.poetryportfolio.icu/wp-content/uploads/2024/10/DSC_1933-1870x2805.jpg',
+        ],
+        {
+          ratio: '2 / 3',
+          images: [
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/01/image_4184303614015645727561788246046.jpg',
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/08/dsc_53748684737361522642707-1151x1536.jpg'
+          ]
+        },
+        {
+          ratio: '1 / 1',
+          images: [
+            'https://www.poetryportfolio.icu/wp-content/uploads/2025/11/20250517_0121394634348022468731662-1536x1536.jpg',
+            'https://mw.poetryportfolio.icu/image/01.png',
+            'https://mw.poetryportfolio.icu/image/02.png'
+          ]
+        },
+        {
+          ratio: '3 / 2',
+          images: [
+            'https://www.poetryportfolio.icu/wp-content/uploads/2024/09/freecompress-IMG_0681-%E5%B7%B2%E5%A2%9E%E5%BC%BA-%E9%99%8D%E5%99%AA-2048x1365.jpg',
+            'https://mw.poetryportfolio.icu/image/03.png',
+            'https://mw.poetryportfolio.icu/image/04.png'
+          ]
+        },
+        {
+          ratio: '3 / 4',
+          images: [
+            'https://www.poetryportfolio.icu/wp-content/uploads/2026/08/image_1785184034380_2393035000721026727059.jpg',
+            'https://www.poetryportfolio.icu/wp-content/uploads/2026/08/image_1785184026985_7949219509588376928119-1024x1536.jpg',
+            'https://www.poetryportfolio.icu/wp-content/uploads/2026/08/image_1785184040820_492866692087458764417-1024x1536.jpg'
+          ]
+        }
+      ];
+
+      const feed = document.getElementById('feed');
+
+      // -------------------------------------------------------------
+      // Detect which sizing strategy to use.
+      //
+      // -------------------------------------------------------------
+      // ╔════════════════════════════════════════════════════════════╗
+      // ║  2026-08-10 最终策略调整（根因来自用户反馈现象）：           ║
+      // ║                                                            ║
+      // ║  用户原话："闪一下是对的，但立马就被强制调回宽度不一致"       ║
+      // ║  → 说明首帧 CSS 原生 aspect-ratio 在微信 X5 里其实是**正确  ║
+      // ║    的**（"闪一下"那一帧就是 CSS 原生渲染）；搞砸的是我们的   ║
+      // ║    fallback（JS 内联写 style.width/height）覆盖上去把它改错  ║
+      // ║    了。QQ / Chrome 正常 = 它们没进 fallback，一直用 CSS。    ║
+      // ║                                                            ║
+      // ║  所以：无论什么 UA / 浏览器，一律用原生 CSS aspect-ratio。   ║
+      // ║  不再写内联像素宽高，从根本上消除"先对后错"。如果真遇到某老  ║
+      // ║  版本微信 CSS aspect-ratio 不对，由下面的「自检兜底函数」    ║
+      // ║  判断真的错了才切到 fallback（不会反过来影响正确状态）。      ║
+      // ╚════════════════════════════════════════════════════════════╝
+      //
+      // 旧策略保留注释：
+      //   WeChat X5 bug: newer X5 accepts setting style.aspectRatio
+      //   (so a plain feature test would PASS) but RENDERS it wrong
+      //   — the height collapses or is computed from wrong width,
+      //   producing a shorter, tightly-cropped card.
+      //   So: ALWAYS force padding-top fallback for MicroMessenger UA,
+      //   regardless of whether aspect-ratio setter appears to work.
+      // -------------------------------------------------------------
+      const UA = navigator.userAgent || '';
+      const IS_WECHAT = /MicroMessenger/i.test(UA) || /MQQBrowser/i.test(UA);
+      // ★ 2026-08-10 最终单路径策略（再也不分浏览器分支了，一个算法管全端）：
+      //   所有浏览器一律走 JS 直接写 style.width / style.height 像素值。
+      //   为什么放弃 CSS aspect-ratio？
+      //     1. 微信 X5 aspect-ratio 假阳性，会裁切图片（已踩坑 N 次）
+      //     2. CSS 下每组按 max-height 单独约束 → 竖图被缩窄、横图顶满 → 每组宽度天然不一样
+      //        用户明确要求「所有组宽度完全一致」，CSS 单元素计算做不到跨元素统一
+      //   所以：JS 统一读一次全局尺寸 → 算 UNIFIED_W（见 recalcAllFallback）→ 全组同宽同算法，
+      //        一次写死终身不动，既满足「统一宽度」，又杜绝裁切，还绕开所有 X5 布局 bug。
+      const SUPPORTS_ASPECT_RATIO = false;  // 占位：不再使用
+      let USE_AR = false;                   // 永远 false，统一走 fallback
+
+      // ★ 默认比例（要和 CSS 里 .stack 的 aspect-ratio 值保持一致）
+      //   改 CSS 时这里也要改，微信才能同步
+      const DEFAULT_RATIO_STR = '2 / 3';
+
+      // 把 'W / H' 解析成数字 {w, h}。例：'2 / 3' → {w:2, h:3}
+      function parseRatio(ratioStr) {
+        if (!ratioStr || typeof ratioStr !== 'string') return null;
+        const parts = ratioStr.split('/').map(s => parseFloat(s.trim()));
+        if (parts.length !== 2 || parts.some(isNaN) || parts[0] === 0) return null;
+        return { w: parts[0], h: parts[1] };
+      }
+
+      // -------------------------------------------------------------
+      // 尺寸应用函数（最终版！）
+      //
+      // 上一版 bug：每组单独调用 recalc()，各自读 getComputedStyle().maxHeight
+      // → 但微信 X5 的 55vh 是「当前可视高度」，会受顶部地址栏显示/隐藏、
+      // 滚动位置影响。第 1 组算的时候地址栏显示着，HMAX 偏小；滚到第 2 组时
+      // 地址栏收起来了，HMAX 又变大 → 相同比例的两组算出了不同宽度，
+      // 结果就是你看到的「图1里组1窄、组2宽，每组都不一样」。
+      //
+      // ↓↓ 修复方式：所有组共用「全局同一套 AVAIL_W + HMAX」↓↓
+      //
+      // 现代浏览器 (USE_AR=true):
+      //   aspect-ratio 原生支持，一行搞定。
+      //
+      // 微信 X5 / 老内核 (USE_AR=false):
+      //   1) applyRatio 被调用时不立即算尺寸，只把 {el, ratio} 登记到
+      //      fallbackStacks 数组里。
+      //   2) 由全局的 recalcAllFallback() 统一调度一次刷新：
+      //        · 先清空所有组的内联 width/height → 回到纯 CSS 布局
+      //        · 从第 0 组读一次 BCR.width → 得到全局 AVAIL_W
+      //          （所有组在 CSS 下本来应该一样宽，所以读谁都行）
+      //        · 用 window.innerHeight 直接算 max-height:55vh → 全局 HMAX
+      //          （用同一个视口高度，不读每组的 computedStyle）
+      //        · 遍历所有组：各自用自己的 ratio + 同一个 AVAIL_W + 同一个 HMAX
+      //          算出 finalW / finalH，统一写回到内联样式。
+      //   → 同一比例的所有组：像素尺寸 100% 一致，不再出现每组宽度不一样
+      // -------------------------------------------------------------
+      // ╔══════════════════════════════════════════════════════════════╗
+      // ║  ★★★ 调左右边距：改 CSS .feed { padding-left/right } 即可 ★★★ ║
+      // ╠══════════════════════════════════════════════════════════════╣
+      // ║  卡片宽度策略：永远顶满 feed 内容区宽度（UNIFIED_W = AVAIL_W） ║
+      // ║  · 所有组宽度像素级一致，和图片比例无关                       ║
+      // ║  · 高度按各自比例自动算，不设上限，图片不会被裁切             ║
+      // ║  · 调边距方法：同时改以下两处（保持一致）：                   ║
+      // ║     1) CSS  .feed { padding-left/right: 30px }               ║
+      // ║     2) JS   FEED_LR_PADDING = 60  (= 左右 padding 之和)      ║
+      // ╚══════════════════════════════════════════════════════════════╝
+
+      // 与 CSS .stack { max-width: 360px } 严格同步，改一边必须改另一边
+      var MAX_W_CSS = 360;
+      // 与 CSS .feed { padding-left/right: 30px } 严格同步（总侧距 = 左右 padding 之和 = 30*2 = 60）
+      var FEED_LR_PADDING = 60;
+
+      var fallbackStacks = []; // [{ el: HTMLElement, r: {w:Number, h:Number} }]
+      var _fbRecalcing = false;        // 正在写 style 期间（resize 循环保护）
+      var _fbDebTimer = null;          // debounce 定时器
+      var FB_DEBOUNCE_MS = 120;        // 短时间内 resize / 图片加载触发多次 → 合并成一次重算
+      var _fbRobs = null;              // ResizeObserver 实例（仅创建一次）
+      // 相同 (iw, ih, feedW) 直接跳过，避免 X5 连续 layout 抖动
+      var _fbLastCache = null;         // { iw:number, ih:number, fw:number, maxw:number }
+      // ★ 关键：recalcAllFallback 第一次成功算完全部组 → 永久锁死！
+      // 之后不再响应 resize / orientationchange / ResizeObserver。
+      // 因为一动就会触发微信 X5 的「只对部分 stack 局部重排 → 同比例不同宽」bug。
+      // 用户横竖屏切换这种极端场景，宁可保持初次布局的一致性，也不能让它"越改越歪"。
+      var _fbLocked = false;
+
+      function scheduleRecalcAllFallback() {
+        if (_fbLocked) return;           // 锁死了，这辈子不再重算
+        if (_fbDebTimer) { clearTimeout(_fbDebTimer); _fbDebTimer = null; }
+        _fbDebTimer = setTimeout(function () {
+          _fbDebTimer = null;
+          recalcAllFallback();
+        }, FB_DEBOUNCE_MS);
+      }
+
+      function recalcAllFallback() {
+        if (_fbLocked) return;           // 锁死了，这辈子不再重算
+        if (fallbackStacks.length === 0) return;
+        if (_fbRecalcing) return;  // ResizeObserver 循环保护：正在写尺寸时就别再进了
+
+        // 1) 先读三个稳定的"全局输入"——完全不依赖任何单个 stack 的布局状态，
+        //    从根源上杜绝"第 0 组被上次写的 style.width 污染全局 AVAIL_W"。
+        var iw = (typeof window.innerWidth === 'number') ? window.innerWidth : 0;
+        var ih = (typeof window.innerHeight === 'number') ? window.innerHeight : 0;
+        var feedEl = document.getElementById('feed') || document.querySelector('.feed');
+        var fwRaw = feedEl ? (feedEl.clientWidth || 0) : 0;
+        var fw;  // ★ 最终使用的 feed「内容区宽度」（不含 padding，卡片真正的可用空间）
+
+        if (fwRaw > 0) {
+          // —— 路径 A：feed 已完成真实布局 ——
+          //   clientWidth = content-box + padding（左右各 30），
+          //   要得到卡片可放的空间，必须减去 FEED_LR_PADDING（左右 padding 之和 = 60）
+          fw = Math.max(0, fwRaw - FEED_LR_PADDING);
+        } else if (iw > 0) {
+          // —— 路径 B：feed 还没完成布局（首帧 DOM 还没挂好 / X5 抽风）——
+          //   用视口宽度 - feed 总侧距估算，已经是内容区宽度了，不用再减
+          fw = Math.max(0, iw - FEED_LR_PADDING);
+        } else {
+          fw = 0;
+        }
+        if (fw <= 0) {
+          // 什么都拿不到 → 两帧后再试（微信 X5 首帧 DOM 还没挂的情况）
+          requestAnimationFrame(function () {
+            requestAnimationFrame(scheduleRecalcAllFallback);
+          });
+          return;
+        }
+
+        // 2) 缓存命中：视口尺寸 + feed 内容区宽度完全没变 → 直接跳过
+        var key = iw + '_' + ih + '_' + fw + '_' + MAX_W_CSS;
+        if (_fbLastCache && _fbLastCache.k === key) return;
+
+        _fbRecalcing = true;
+        try {
+          // 3) ★ 全局统一宽度算法：永远顶满 feed 内容区，不设高度限制
+          //
+          //   UNIFIED_W = min(feed 内容区宽度 fw, CSS max-width:360px)
+          //     → 所有组同一个宽度，和图片比例**完全无关**
+          //     → 不会再因为 feed padding 没扣除导致卡片顶到屏幕边缘
+          //
+          //   高度 = UNIFIED_W × (r.h / r.w)
+          //     → 各自按比例算，不设上限
+          //     → 盒子比例严格正确，object-fit:cover 永远不会裁切图片
+          // ──────────────────────────────────────────────────────────────
+          var UNIFIED_W = Math.min(fw, MAX_W_CSS);
+          if (UNIFIED_W < 10) UNIFIED_W = 10;
+
+          var i, entry, r, finalH;
+          for (i = 0; i < fallbackStacks.length; i++) {
+            entry = fallbackStacks[i];
+            r = entry.r;
+            finalH = UNIFIED_W * (r.h / r.w);
+
+            entry.el.style.width = UNIFIED_W + 'px';
+            entry.el.style.height = finalH + 'px';
+          }
+
+          _fbLastCache = { k: key };
+
+          // ★ 一次写成功，终身锁死！
+          //   立刻 disconnect ResizeObserver + 移除全局事件，
+          //   彻底杜绝「之后某事件触发 → 只改了部分组 → 宽度不一致」的可能性。
+          //  （写在 try 里，某步失败就不锁，下次还能重试。）
+          _fbLocked = true;
+          try {
+            if (_fbRobs && typeof _fbRobs.disconnect === 'function') _fbRobs.disconnect();
+          } catch (e) { }
+          try { window.removeEventListener('resize', scheduleRecalcAllFallback); } catch (e) { }
+          try { window.removeEventListener('orientationchange', scheduleRecalcAllFallback); } catch (e) { }
+          // debounce 定时器也清了，别再进来
+          if (_fbDebTimer) { clearTimeout(_fbDebTimer); _fbDebTimer = null; }
+        } finally {
+          // 下一轮再解锁（给 ResizeObserver 留一帧缓冲，避免写 style 立刻触发回调）
+          setTimeout(function () { _fbRecalcing = false; }, 60);
+        }
+      }
+
+      function applyRatio(stackEl, ratioStr) {
+        var r = parseRatio(ratioStr) || parseRatio(DEFAULT_RATIO_STR);
+        var effectiveRatio = ratioStr || DEFAULT_RATIO_STR;
+        try { stackEl.setAttribute('data-stack-ratio', effectiveRatio); } catch (e) { }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        //  手机端 / 电脑端 分流：
+        //    <768px  →  手机端（含微信浏览器）：继续走原 fallback 流程，
+        //              JS 写像素 width/height，完全 0 改动，和之前一模一样。
+        //    ≥768px  →  电脑端：不进 fallbackStacks，不写 JS 像素尺寸，
+        //              仅写内联 style.aspect-ratio 交给 CSS columns 瀑布流计算高度，
+        //              桌面端 Chrome/Safari/Edge 的 aspect-ratio 原生支持没问题。
+        // ═══════════════════════════════════════════════════════════════════════
+        var iw = (typeof window.innerWidth === 'number') ? window.innerWidth : 0;
+        var isDesktop = iw >= 768;
+        try {
+          if (window.matchMedia) {
+            isDesktop = window.matchMedia('(min-width: 768px)').matches;
+          }
+        } catch (e) { }
+
+        if (isDesktop) {
+          // 电脑端：只写真实比例给 CSS，让每列宽度 + aspect-ratio 共同决定卡片尺寸
+          try { stackEl.style.aspectRatio = r.w + ' / ' + r.h; } catch (e) {
+            try { stackEl.style.setProperty('aspect-ratio', r.w + ' / ' + r.h); } catch (e2) { }
+          }
+          return;
+        }
+
+        // —— 手机端：维持原状，100% 原 fallback 流程 ——
+        fallbackStacks.push({ el: stackEl, r: r });
+
+        // ResizeObserver：首次布局前如果 feed 宽度还没稳定，可以通过它触发一次重算
+        // （_fbLocked 之后会被 disconnect，所以只在首次布局阶段有效）
+        if (typeof ResizeObserver !== 'undefined' && ResizeObserver) {
+          try {
+            if (!_fbRobs) _fbRobs = new ResizeObserver(function () {
+              if (!_fbRecalcing && !_fbLocked) scheduleRecalcAllFallback();
+            });
+            _fbRobs.observe(stackEl);
+          } catch (e) { /* 老浏览器没 ResizeObserver 就算了，靠下面的事件兜底 */ }
+        }
+      }
+
+      // 单路径：所有浏览器都绑定事件（首次成功算完后会被 _fbLocked 锁死 + 自动 removeEventListener）
+      (function bindFallbackEvents() {
+        // DOM 解析完立刻跑（此时图片没加载，但 CSS 宽度已经确定了）
+        if (document.readyState !== 'loading') scheduleRecalcAllFallback();
+        else document.addEventListener('DOMContentLoaded', scheduleRecalcAllFallback);
+
+        // 全部资源加载完 + 两帧后再跑一次（应对微信异步布局、图片撑开流导致
+        // 的 innerHeight 跳动、字体加载完成后宽度变化等边界情况）
+        window.addEventListener('load', function () {
+          scheduleRecalcAllFallback();
+          requestAnimationFrame(function () {
+            requestAnimationFrame(scheduleRecalcAllFallback);
+          });
+        });
+
+        // 横屏旋转 / 窗口变宽 / 地址栏收起 → 在锁死之前都允许重算一次（锁死后会被移除）
+        window.addEventListener('resize', scheduleRecalcAllFallback);
+        window.addEventListener('orientationchange', scheduleRecalcAllFallback);
+      })();
+
+      // Build all groups
+      groups.forEach((item, gi) => {
+        const imgs = Array.isArray(item) ? item : item.images;
+        const ratio = Array.isArray(item) ? null : item.ratio;
+
+        const group = document.createElement('section');
+        group.className = 'group';
+
+        const stack = document.createElement('div');
+        stack.className = 'stack';
+        stack.dataset.group = gi;
+
+        // 注意：先把 stack 挂到 DOM 里（让它有真实宽度），再 applyRatio 才能拿到 getBoundingClientRect
+        group.appendChild(stack);
+        feed.appendChild(group);
+
+        applyRatio(stack, ratio);
+
+        // Create cards for this group
+        const cardEls = imgs.map((src) => {
+          const c = document.createElement('div');
+          c.className = 'card';
+          c.innerHTML = `<img src="${src}" alt="" draggable="false">`;
+          stack.appendChild(c);
+          return c;
+        });
+
+        // Initialize this stack
+        initStack(stack, cardEls, imgs.length);
+      });
+
+      // Stack controller factory
+      function initStack(stackEl, cards, N) {
+        let cur = 0;
+        let animating = false;
+        let dragging = false;
+        let startX = 0, startY = 0, lastX = 0;
+        let startTime = 0;
+        let axisLocked = null;
+        let _swipeTraced = false;  // 当前这次 pointerdown→pointerup 手势内，是否出现过「滑动痕迹」
+
+        // ════════════════════════════════════════════════════════════════
+        // 「滑动手势 vs 点击放大」互斥锁（最终、极简版）
+        //
+        // 思路完全反转（现在用原生 click 做主判定）：
+        //   · 真的点击 → 滑动手势代码里不会留任何阻断标记 → click 顺利命中 → 放大
+        //   · 真的拖动（或切换）→ 一旦拖拽距离超过一定值就写 blockUntil=未来 350ms，
+        //     然后浏览器照常派发的那一次 click 事件（滑动松手后 0~100ms 内）正好撞窗，
+        //     被 click 监听器直接 return —— 就不会放大第二张了。
+        //
+        // 调用点：
+        //   ① onPointerMove：axisLocked=x 且 |dx|≥12 → 写一次（进入真拖状态立刻锁）
+        //   ② go()：真正触发切换时再写一次（保险，哪怕 move 阶段写的被覆盖）
+        //   ③ onPointerUp 的 snapback 分支：|dx|≥0.5*threshold（拖了挺远但没切）→ 再写一次
+        // ════════════════════════════════════════════════════════════════
+        var BLOCK_MS = 350; // 阻断 350ms，足够盖过浏览器 post-mouseup click 的派发延迟
+        function markBlockNextClick() {
+          try {
+            window.__lb_blockNextClickUntil = (Date.now ? Date.now() : new Date().getTime()) + BLOCK_MS;
+          } catch (e) { }
+        }
+        // ① 在拖动过程中「确定这是真拖、不是手抖」时调用一次：先把锁提前写好，
+        //    同时打标 _swipeTraced = true，这样 onPointerUp 末尾的 commitSwipeEnd()
+        //    才会"补一道保险"再刷新一次锁（避免 move 阶段写的锁因某种原因太早过期）。
+        function markSwipeTrace() {
+          _swipeTraced = true;
+          markBlockNextClick();
+        }
+        // ② 在 onPointerUp/onPointerCancel 的最末尾调用：
+        //    · 如果 _swipeTraced=true（本次手势真拖过 / 真切换过）→ 再写一次锁，盖死 click
+        //    · 如果 _swipeTraced=false（本次手势是纯点击，dx=0 几像素） → 不写锁，
+        //      让浏览器稍后派发的 click 事件顺利命中灯箱。
+        //    最后无论如何都把 _swipeTraced 复位，迎接下一次手势。
+        function commitSwipeEnd() {
+          if (_swipeTraced) markBlockNextClick();
+          _swipeTraced = false;
+        }
+
+        function render() {
+          cards.forEach((el, i) => {
+            let dist = ((i - cur) + N) % N;
+            const lvl = Math.min(dist, 3);
+
+            el.className = 'card';
+            if (dist === 0) {
+              el.classList.add('active', 'l0');
+            } else {
+              el.classList.add('l' + lvl);
+            }
+            el.style.transform = '';
+            el.style.opacity = '';
+            el.style.filter = '';
+            el.style.zIndex = '';
+            el.style.transition = '';
+          });
+        }
+
+        function go(dir, fromDrag) {
+          // 真正触发切换时，当前手势一定是滑动手势 → 记录一下「本次 onPointerUp 结束时要打互斥标记」
+          markSwipeTrace();
+          if (animating) return;
+          animating = true;
+
+          const activeCard = cards[cur];
+
+          if (dir === 1) {
+            // NEXT: active card flies out left, next card gradually rises to l0
+            const nextIdx = (cur + 1) % N;
+            if (nextIdx !== cur) {
+              const nextCard = cards[nextIdx];
+              nextCard.style.transition = 'transform 0.55s cubic-bezier(0.22,1,0.36,1), opacity 0.55s ease, filter 0.55s ease';
+              void nextCard.offsetWidth;
+              nextCard.style.transform = 'translate(0, 0) scale(1) rotate(0deg)';
+              nextCard.style.opacity = '1';
+              nextCard.style.filter = 'brightness(1)';
+            }
+            activeCard.classList.add('swipe-out-left');
+            setTimeout(() => {
+              cur = (cur + 1) % N;
+              render();
+              animating = false;
+            }, 550);
+          } else {
+            // PREVIOUS: prev card flies IN from left, active card sinks to l1
+            const prevIdx = (cur - 1 + N) % N;
+            if (prevIdx === cur) { animating = false; return; }
+            const prevCard = cards[prevIdx];
+
+            prevCard.style.zIndex = '20';
+
+            if (!fromDrag) {
+              // Button/keyboard — teleport prev card to start (off-screen left)
+              prevCard.style.transition = 'none';
+              prevCard.style.transform = 'translate(-120%, 20px) rotate(-8deg) scale(0.92)';
+              prevCard.style.opacity = '0';
+              prevCard.style.filter = 'brightness(1)';
+              void prevCard.offsetWidth;
+            }
+
+            // Prev card: spring overshoot for a natural "landing" feel, opacity fades in quicker
+            prevCard.style.transition = 'transform 0.55s cubic-bezier(0.34, 1.25, 0.64, 1), opacity 0.4s ease, filter 0.5s ease';
+            // Active card: ease-out, slightly shorter so it settles before the prev card lands
+            activeCard.style.transition = 'transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease, filter 0.5s ease';
+            void prevCard.offsetWidth;
+
+            // Animate prev card in to l0 position
+            prevCard.style.transform = 'translate(0, 0) scale(1) rotate(0deg)';
+            prevCard.style.opacity = '1';
+            prevCard.style.filter = 'brightness(1)';
+
+            // Animate active card sinking to l1
+            activeCard.style.transform = 'translate(18px, 10px) scale(0.95)';
+            activeCard.style.opacity = '0.90';
+            activeCard.style.filter = 'brightness(0.78)';
+
+            setTimeout(() => {
+              cur = prevIdx;
+              render();
+              animating = false;
+            }, 570);
+          }
+        }
+
+        function onPointerDown(e) {
+          if (animating) return;
+          dragging = true;
+          startX = e.clientX;
+          startY = e.clientY;
+          lastX = startX;
+          startTime = performance.now();
+          axisLocked = null;
+          _swipeTraced = false;  // 新手势开始：清零「是否拖过」标记
+
+          const activeCard = cards[cur];
+          activeCard.classList.add('dragging');
+          if (activeCard.setPointerCapture) {
+            try { activeCard.setPointerCapture(e.pointerId); } catch (err) { }
+          }
+          e.stopPropagation();
+        }
+
+        function onPointerMove(e) {
+          if (!dragging) return;
+          let dx = e.clientX - startX;
+          let dy = e.clientY - startY;
+
+          if (!axisLocked && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+            axisLocked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+          }
+
+          if (axisLocked === 'y') {
+            cancelDrag();
+            return;
+          }
+
+          if (axisLocked !== 'x') return;
+
+          // 只要进入水平拖拽、位移 ≥12px（点击过程中手指难免会微动几像素，
+          // 12px 大约是正常人"无意识抖动"上限的 2~3 倍）→ 立刻写互斥锁，
+          // 防止 onPointerUp 后浏览器派发出的 click 被误当"点击放大"。
+          if (Math.abs(dx) >= 12) markSwipeTrace();
+
+          lastX = e.clientX;
+          const activeCard = cards[cur];
+          const progress = Math.min(Math.abs(dx) / 220, 1);
+
+          if (dx < 0) {
+            // SWIPE LEFT (next): active follows finger left, next card rises up
+            const rot = dx * 0.02;
+            const op = 1 - Math.abs(dx) / 350;
+            activeCard.style.transform = `translate(${dx}px, ${dx * 0.08}px) rotate(${rot}deg)`;
+            activeCard.style.opacity = Math.max(op, 0.1);
+
+            const nextIdx = (cur + 1) % N;
+            if (nextIdx !== cur) {
+              const nextCard = cards[nextIdx];
+              nextCard.style.transform = `translate(${18 - progress * 18}px, ${10 - progress * 10}px) scale(${0.95 + progress * 0.05})`;
+              nextCard.style.opacity = 0.90 + progress * 0.10;
+              nextCard.style.filter = `brightness(${0.78 + progress * 0.22})`;
+            }
+          } else {
+            // SWIPE RIGHT (previous): active sinks to l1, prev card slides in from left
+            activeCard.style.transform = `translate(${18 * progress}px, ${10 * progress}px) scale(${1 - 0.05 * progress})`;
+            activeCard.style.opacity = 1 - 0.10 * progress;
+            activeCard.style.filter = `brightness(${1 - 0.22 * progress})`;
+
+            const prevIdx = (cur - 1 + N) % N;
+            if (prevIdx !== cur) {
+              const prevCard = cards[prevIdx];
+              prevCard.style.zIndex = '20';
+              prevCard.style.transform = `translate(${-120 * (1 - progress)}%, ${20 * (1 - progress)}px) rotate(${-10 * (1 - progress)}deg) scale(${0.92 + 0.08 * progress})`;
+              prevCard.style.opacity = progress;
+              prevCard.style.filter = 'brightness(1)';
+            }
+          }
+
+          e.stopPropagation();
+        }
+
+        function onPointerUp(e) {
+          if (!dragging) return;
+          dragging = false;
+
+          const dx = lastX - startX;
+          const dt = performance.now() - startTime;
+          const v = dt > 0 ? dx / dt : 0;
+
+          const threshold = Math.min(window.innerWidth * 0.12, 70);
+          const velocityThreshold = 0.25;
+
+          const activeCard = cards[cur];
+          activeCard.classList.remove('dragging');
+
+          if (dx < -threshold || v < -velocityThreshold) {
+            go(1, true);
+          } else if (dx > threshold || v > velocityThreshold) {
+            go(-1, true);
+          } else {
+            // Snap back — reset all inline styles
+            // ★ 如果拖过一定距离（超过切换阈值一半，即明显有过"想拖"的意图但没拖过线）
+            //   也记为滑动痕迹（避免拖到 40% 又松手回弹时误放大）
+            if (Math.abs(dx) >= threshold * 0.5) markSwipeTrace();
+
+            activeCard.style.transform = '';
+            activeCard.style.opacity = '';
+            activeCard.style.filter = '';
+
+            const nextIdx = (cur + 1) % N;
+            const nextCard = cards[nextIdx];
+            if (nextCard && nextIdx !== cur) {
+              nextCard.style.transform = '';
+              nextCard.style.opacity = '';
+              nextCard.style.filter = '';
+            }
+
+            const prevIdx = (cur - 1 + N) % N;
+            const prevCard = cards[prevIdx];
+            if (prevCard && prevIdx !== cur) {
+              prevCard.style.transform = '';
+              prevCard.style.opacity = '';
+              prevCard.style.filter = '';
+              prevCard.style.zIndex = '';
+            }
+          }
+
+          if (activeCard.releasePointerCapture && e.pointerId !== undefined) {
+            try { activeCard.releasePointerCapture(e.pointerId); } catch (err) { }
+          }
+
+          // ★ 关键：在 onPointerUp 的**最末尾** commit 互斥锁
+          //    这样标记的时间戳 = 真正松手时刻。
+          //    然后我们在 onUp 判定里查 180ms 窗口，刚好把「同一个手势的 onUp/mouseup」
+          //    事件挡住，而不会杀死「下一次重新点击」。
+          commitSwipeEnd();
+        }
+
+        function cancelDrag() {
+          if (!dragging) return;
+          dragging = false;
+          _swipeTraced = false;  // 手势中断：复位标记（避免下次点击被连带锁）
+          const activeCard = cards[cur];
+          activeCard.classList.remove('dragging');
+          activeCard.style.transform = '';
+          activeCard.style.opacity = '';
+          activeCard.style.filter = '';
+
+          const nextIdx = (cur + 1) % N;
+          const nextCard = cards[nextIdx];
+          if (nextCard && nextIdx !== cur) {
+            nextCard.style.transform = '';
+            nextCard.style.opacity = '';
+            nextCard.style.filter = '';
+          }
+
+          const prevIdx = (cur - 1 + N) % N;
+          const prevCard = cards[prevIdx];
+          if (prevCard && prevIdx !== cur) {
+            prevCard.style.transform = '';
+            prevCard.style.opacity = '';
+            prevCard.style.filter = '';
+            prevCard.style.zIndex = '';
+          }
+        }
+
+        stackEl.addEventListener('pointerdown', onPointerDown);
+        stackEl.addEventListener('pointermove', onPointerMove);
+        stackEl.addEventListener('pointerup', onPointerUp);
+        stackEl.addEventListener('pointercancel', onPointerUp);
+        stackEl.addEventListener('pointerleave', onPointerUp);
+        stackEl.addEventListener('contextmenu', e => e.preventDefault());
+
+        // ============================================================
+        // 【首次进入轻推提示】：模拟一次轻微的"左滑"，让用户知道
+        //  卡片堆里有更多图片、可以左右滑动切换。
+        //  只触发一次，且全局只会有一组（第一组）被允许提示。
+        // ============================================================
+        var nudged = false;
+
+        function nudge() {
+          if (nudgingLocked || nudged || N < 2 || animating) return;
+          nudged = true;
+          nudgingLocked = true;
+
+          var activeCard = cards[cur];
+          var nextIdx = (cur + 1) % N;
+          var nextCard = (nextIdx !== cur) ? cards[nextIdx] : null;
+
+          // ──── ★ 自动滑动动画参数（可根据手感调整） ────────────
+          // duration1   : 左滑"推出去"过程时长（毫秒）。越大越慢。
+          // progressMax : 第二张卡片从"层级2"升到"层级1"的程度，0~1。
+          //               越大第二张卡显得越"被翻出来"，默认 0.4 比较克制。
+          // dxMax       : 当前卡片向左位移像素（负数=向左）。越大越夸张。
+          // holdMs      : 到达最大位移后"停留"的时间，让用户看清。
+          // snapMs      : 回弹到原位的时长。
+          // cleanupMs   : 清理内联样式的时间（比snapMs略大20ms即可）。
+          // ────────────────────────────────────────────────────────
+          var duration1 = 480;   // ★ 阶段1（推出去）时长，毫秒
+          var progressMax = 0.40;  // ★ 后层卡片升起的程度（0不升起，1完全升起）
+          var dxMax = -90;   // ★ 顶部卡片左滑最大位移（像素，负=左）
+          var holdMs = 260;   // ★ 推到最远后停多久再弹回（毫秒）
+          var snapMs = 450;   // ★ 弹回原位动画时长（毫秒）
+          var cleanupMs = 470;   // ★ 弹回后清理内联样式的延迟（比snapMs大20即可）
+
+          var t0 = performance.now();
+          activeCard.style.transition = 'none';
+          if (nextCard) nextCard.style.transition = 'none';
+
+          function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+          function easeInCubic(t) { return t * t * t; }
+
+          function phase1() {
+            var p = Math.min(1, (performance.now() - t0) / duration1);
+            var ep = easeOutCubic(p);
+            var dx = dxMax * ep;
+            var prog = progressMax * ep;
+            var rot = dx * 0.02;
+            var op = 1 - Math.abs(dx) / 350;
+
+            activeCard.style.transform = 'translate(' + dx + 'px, ' + (dx * 0.08) + 'px) rotate(' + rot + 'deg)';
+            activeCard.style.opacity = Math.max(op, 0.1);
+
+            if (nextCard) {
+              nextCard.style.transform = 'translate(' + (18 - prog * 18) + 'px, ' + (10 - prog * 10) + 'px) scale(' + (0.95 + prog * 0.05) + ')';
+              nextCard.style.opacity = 0.90 + prog * 0.10;
+              nextCard.style.filter = 'brightness(' + (0.78 + prog * 0.22) + ')';
+            }
+
+            if (p < 1) requestAnimationFrame(phase1);
+            else {
+              // 阶段2：停 holdMs 毫秒后，用 CSS 过渡平滑地弹回原位
+              setTimeout(function () {
+                var easeBack = 'cubic-bezier(0.22,1,0.36,1)';
+                var transStr = 'transform ' + snapMs + 'ms ' + easeBack + ', opacity ' + snapMs + 'ms ease, filter ' + snapMs + 'ms ease';
+                activeCard.style.transition = transStr;
+                activeCard.style.transform = '';
+                activeCard.style.opacity = '';
+
+                if (nextCard) {
+                  nextCard.style.transition = transStr;
+                  nextCard.style.transform = '';
+                  nextCard.style.opacity = '';
+                  nextCard.style.filter = '';
+                }
+
+                // 动画结束后清理内联样式（避免影响后续真实滑动）
+                setTimeout(function () {
+                  activeCard.style.transition = '';
+                  if (nextCard) nextCard.style.transition = '';
+                  nudgingLocked = false;
+                }, cleanupMs);
+              }, holdMs);
+            }
+          }
+          requestAnimationFrame(phase1);
+        }
+
+        // 如果用户在动画触发前就已经操作了（点、滑、滚），取消这次演示，避免"跟用户抢操作"
+        function cancelNudge() {
+          if (!nudged) nudged = true;
+        }
+        stackEl.addEventListener('touchstart', cancelNudge, { once: true, passive: true });
+        stackEl.addEventListener('pointerdown', cancelNudge, { once: true });
+
+        stackEl._nudge = nudge;   // 让外层 load 回调能调用这个方法
+
+        // 每组自身的键盘切换入口
+        stackEl._go = go;
+
+        // 跳转到指定索引（无动画，供灯箱关闭时同步底层 stack 显示用）
+        // 用法：stackEl._jumpTo(idx)，idx 是 0-based（0 = 同组第 1 张）
+        stackEl._jumpTo = function (idx) {
+          idx = (typeof idx === 'number') ? Math.floor(idx) : 0;
+          cur = ((idx % N) + N) % N;  // 取模，防止越界
+          render();
+        };
+
+        render();
+      }
+
+      // 全局标志：整个页面加载期间最多只会有一组被推一次
+      var nudgingLocked = false;
+
+      // ──── ★ 触发时机（进入页面后 → 自动滑动前 的等待策略） ────────────────────
+      //
+      //  triggerMode 四选一：
+      //    'load'       = 等页面**全部资源**（所有组的所有图片）下载完 → 再 introDelay → 滑
+      //                   （最稳但最慢，微信浏览器外网 CDN 慢时可能要 5~10 秒）
+      //    'domready'   = HTML 结构解析好 → 再 introDelay → 滑
+      //                   （启动快，但如果第一张图还没下完，就会"推白框"，不推荐）
+      //    'firstimage' = ★（推荐默认）HTML 解析好后，**只等第一组的第一张图片**就绪
+      //                   → 再 introDelay → 滑。兼顾"快"和"推的是真图不是白框"。
+      //                   不需要等后面 2、3、4、5... 组的图片，
+      //                   微信打开速度会比 'load' 快 3~8 倍。
+      //    'instant'    = 立刻倒计时 introDelay → 滑，不等待任何事件。
+      //
+      //  introDelay：触发起点之后再额外等多少毫秒才真正推一下
+      //              推荐 600 ~ 1500，太短显突兀、太长用户划走
+      // ─────────────────────────────────────────────────────────────────────────────
+      var triggerMode = 'firstimage';   // ★ 触发起点：'load' | 'domready' | 'firstimage' | 'instant'
+      var introDelay = 600;            // ★ 触发起点后再等多少毫秒才开始自动滑动
+
+      function scheduleNudge() {
+        var firstStack = document.querySelector('.stack');
+        if (!firstStack || !firstStack._nudge) return;
+
+        // 用户在任何时刻有操作 → 不管三七二十一直接取消这次教学动画
+        var userInteracted = false;
+        function flag() { userInteracted = true; }
+        window.addEventListener('touchstart', flag, { once: true, passive: true });
+        window.addEventListener('pointerdown', flag, { once: true });
+        window.addEventListener('wheel', flag, { once: true, passive: true });
+        window.addEventListener('keydown', flag, { once: true });
+
+        // 内部真正启动 introDelay 的函数
+        function armTimer() {
+          setTimeout(function () {
+            if (!userInteracted && firstStack._nudge) firstStack._nudge();
+          }, introDelay);
+        }
+
+        if (triggerMode !== 'firstimage') {
+          // 其他三种模式：直接开始倒计时
+          armTimer();
+          return;
+        }
+
+        // —— 'firstimage' 模式：等第 0 组第 0 张图片 <img> 元素 complete 了才倒计时
+        var firstImg = firstStack.querySelector('img');
+        if (!firstImg) {
+          armTimer();  // 兜底：找不到 img 就别等了
+          return;
+        }
+        if (firstImg.complete && firstImg.naturalWidth > 0) {
+          armTimer();  // 已经加载好了（缓存、本地文件等）→ 立刻倒计时
+        } else {
+          firstImg.addEventListener('load', armTimer, { once: true });
+          firstImg.addEventListener('error', armTimer, { once: true });  // 图片加载失败也不能卡着不动
+          // 兜底保险：如果 3.5 秒还没加载好（CDN 崩了、图 404 被 onerror 没触发等），也开始倒计时
+          setTimeout(armTimer, 3500);
+        }
+      }
+
+      if (triggerMode === 'load') {
+        if (document.readyState === 'complete') scheduleNudge();
+        else window.addEventListener('load', scheduleNudge);
+      } else if (triggerMode === 'domready') {
+        if (document.readyState !== 'loading') scheduleNudge();
+        else document.addEventListener('DOMContentLoaded', scheduleNudge);
+      } else if (triggerMode === 'firstimage') {
+        // firstimage 需要 DOM 里已经有 <img> 元素，所以等 DOMContentLoaded
+        if (document.readyState !== 'loading') scheduleNudge();
+        else document.addEventListener('DOMContentLoaded', scheduleNudge);
+      } else {
+        scheduleNudge();
+      }
+
+      // 全局键盘方向键：自动定位到屏幕上可见度最高的那组来操作
+      document.addEventListener('keydown', e => {
+        const stacks = document.querySelectorAll('.stack');
+        // 计算哪一组在视口里露出面积占比最高（用户"正在看"的那组）
+        let best = null;
+        let bestScore = -1;
+        stacks.forEach(s => {
+          const r = s.getBoundingClientRect();
+          const vh = window.innerHeight;
+          const visible = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+          const score = visible / (r.bottom - r.top || 1);
+          if (score > bestScore) { bestScore = score; best = s; }
+        });
+        if (best && bestScore > 0.3 && best._go) {
+          if (e.key === 'ArrowLeft') best._go(-1, false);
+          else if (e.key === 'ArrowRight') best._go(1, false);
+        }
+      });
+
+      // ═══════════════════════════════════════════════════════════════════
+      // 点击图片放大查看 —— 毛玻璃灯箱
+      //   · 全局只建一个 DOM 单例，反复使用
+      //   · 用 FLIP 动画：从被点击小图的精确位置 + 尺寸，放大到屏幕中央
+      //     （视觉上像那张图自己"飞"起来放大了，而不是突兀弹一个弹窗）
+      //   · 关闭方式：点背景任意地方 / 点右上角 × / 键盘 ESC / 安卓返回键
+      // ═══════════════════════════════════════════════════════════════════
+      (function initLightbox() {
+        // 1) 懒创建：第一次有图片被点击时才把 DOM 插到 body 末尾，避免页面一打开就有冗余节点
+        var overlay = null;
+        var lbImg = null;
+        var closeBtn = null;
+        var prevBtn = null;
+        var nextBtn = null;
+        var counterEl = null;
+
+        // —— 当前灯箱的「所在组」状态
+        //    用来做同组上下切换：
+        //    lb_stack  = 所属 .stack 元素
+        //    lb_cards  = 该组所有 .card 元素（按 DOM 顺序 = 图片顺序）
+        //    lb_curIdx = 当前灯箱内显示的是 cards 里的第几张（0-based）
+        //    lb_N      = 该组一共有几张
+        //    lb_switching = 正在切换动画中（防止快速连点叠加）
+        var lb_stack = null;
+        var lb_cards = null;
+        var lb_curIdx = 0;
+        var lb_N = 0;
+        var lb_switching = false;
+
+        // —— 灯箱内部（手机端手势用）滑动切换的私有状态
+        //    手机端箭头隐藏了，用户靠在毛玻璃层左右滑动来切图。
+        //    _lb_blockCloseClickUntil：滑动切换完成后的 320ms 内，「随后浏览器派
+        //       发的 click 事件」要忽略，避免用户刚滑完 -> 灯箱就被"点空白关闭"关了。
+        var _lb_dragOn = false;
+        var _lb_dx0 = 0, _lb_dy0 = 0;
+        var _lb_axis = null;
+        var _lb_blockCloseClickUntil = 0;
+
+        // —— 手机端双指缩放 / 平移 / 双击放大 的私有状态
+        //   · _lb_zoomMode：出现双指后永久锁定为 true（直到所有手指都抬起）。
+        //     在 zoomMode 内：单指移动 = 平移图片，不再触发左右切图。
+        //   · lb_scale：当前缩放比例，1 = 原大，范围 [MIN, MAX]
+        //   · lb_tx / lb_ty：缩放后的平移偏移（图片中心）
+        //   · _lb_pointers：记录每个 pointerId 的 {x,y}，用于算双指距离 / 中心
+        var _lb_zoomMode = false;
+        var lb_scale = 1;
+        var lb_tx = 0, lb_ty = 0;
+        var LB_ZOOM_MIN = 1, LB_ZOOM_MAX = 3.2;
+        var _lb_pointers = {};  // { [pointerId]: {x:number, y:number} }
+        var _lb_zoomStartDist = 0;
+        var _lb_zoomStartScale = 1;
+        var _lb_zoomStartTx = 0, _lb_zoomStartTy = 0;
+        var _lb_zoomStartCx = 0, _lb_zoomStartCy = 0;  // 双指中心（屏幕坐标）
+        var _lb_lastTapAt = 0;
+        var _lb_lastTapX = 0, _lb_lastTapY = 0;
+        var DOUBLE_TAP_MS = 280;
+        var DOUBLE_TAP_DIST = 20;
+        var DOUBLE_TAP_SCALE = 2.0;
+
+        // 把当前 scale / tx / ty 写到 lbImg.style.transform（不碰 transition）
+        function applyZoomTransform() {
+          if (!lbImg) return;
+          lbImg.style.transform =
+            'translate(' + lb_tx.toFixed(2) + 'px,' + lb_ty.toFixed(2) + 'px) ' +
+            'scale(' + lb_scale.toFixed(4) + ')';
+        }
+
+        // 重置缩放 / 平移（切图前、关闭前调用）
+        function resetZoom() {
+          lb_scale = 1; lb_tx = 0; lb_ty = 0;
+          _lb_zoomMode = false;
+          _lb_pointers = {};
+          applyZoomTransform();
+        }
+
+        function updateCounter() {
+          if (!counterEl) return;
+          if (lb_N > 1) {
+            counterEl.textContent = (lb_curIdx + 1) + ' / ' + lb_N;
+            counterEl.style.display = '';
+            if (prevBtn) prevBtn.style.display = '';
+            if (nextBtn) nextBtn.style.display = '';
+          } else {
+            counterEl.style.display = 'none';
+            if (prevBtn) prevBtn.style.display = 'none';
+            if (nextBtn) nextBtn.style.display = 'none';
+          }
+        }
+
+        function ensureDom() {
+          if (overlay) return;
+          overlay = document.createElement('div');
+          overlay.className = 'lightbox';
+          overlay.setAttribute('role', 'dialog');
+          overlay.setAttribute('aria-modal', 'true');
+
+          lbImg = document.createElement('img');
+          lbImg.className = 'lightbox-img';
+          lbImg.alt = '';
+          lbImg.draggable = false;
+
+          closeBtn = document.createElement('button');
+          closeBtn.type = 'button';
+          closeBtn.className = 'lightbox-close';
+          closeBtn.setAttribute('aria-label', '关闭');
+
+          prevBtn = document.createElement('button');
+          prevBtn.type = 'button';
+          prevBtn.className = 'lightbox-prev';
+          prevBtn.setAttribute('aria-label', '上一张');
+
+          nextBtn = document.createElement('button');
+          nextBtn.type = 'button';
+          nextBtn.className = 'lightbox-next';
+          nextBtn.setAttribute('aria-label', '下一张');
+
+          counterEl = document.createElement('div');
+          counterEl.className = 'lightbox-counter';
+
+          // DOM 顺序：counter 在最下层(z-index:1) → close/prev/next 在上层(z-index:2)
+          // prev/next 先 append（这样它们在 overlay click 判定时，target 命中按钮时才不会被误关）
+          overlay.appendChild(prevBtn);
+          overlay.appendChild(nextBtn);
+          overlay.appendChild(closeBtn);
+          overlay.appendChild(counterEl);
+          overlay.appendChild(lbImg);
+          document.body.appendChild(overlay);
+
+          // —— 绑定关闭事件（一次绑完终身受用）——
+          function closeOnClick(e) {
+            // ① 刚滑完图的窗口内 → 这是滑动手势后遗留的 click，不是"想关"，直接吞掉
+            var now = Date.now ? Date.now() : new Date().getTime();
+            if (now < _lb_blockCloseClickUntil) { _lb_blockCloseClickUntil = 0; return; }
+
+            // ② 只有点击「遮罩本体」才关：
+            //    prevBtn / nextBtn / closeBtn 这三个按钮命中时都由它们各自的监听器处理，
+            //    不会误走到这里来关。
+            if (e.target === overlay) closeLightbox();
+          }
+          overlay.addEventListener('click', closeOnClick);
+
+          closeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            closeLightbox();
+          });
+
+          prevBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            goLightbox(-1);
+          });
+
+          nextBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            goLightbox(1);
+          });
+
+          document.addEventListener('keydown', function (e) {
+            if (!overlay || !overlay.classList.contains('is-open')) return;
+            if (e.key === 'Escape') { closeLightbox(); return; }
+            if (e.key === 'ArrowLeft') { e.preventDefault(); goLightbox(-1); return; }
+            if (e.key === 'ArrowRight') { e.preventDefault(); goLightbox(1); return; }
+          });
+
+          // —— 电脑端：鼠标滚轮 / 触控板上下滑切换图片 ——
+          //   滚轮一格 → 切一张，动画期间忽略后续滚轮事件。
+          //   deltaY > 0（向下滚 / 两指下推）→ 下一张（符合图库类产品惯例）
+          //   deltaY < 0（向上滚 / 两指上推）→ 上一张
+          var _lb_wheelCooling = false;
+          overlay.addEventListener('wheel', function (e) {
+            if (!overlay || !overlay.classList.contains('is-open')) return;
+            // 只响应垂直滚动（横向滚动不处理）
+            var dy = e.deltaY || 0;
+            if (Math.abs(dy) < 20) return;  // 触控板微动不算
+            if (lb_switching || _lb_wheelCooling) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+            _lb_wheelCooling = true;
+            goLightbox(dy > 0 ? 1 : -1);
+            // 冷却 380ms（比 320ms 切换动画略长），防止滚轮连续事件触发多次
+            setTimeout(function () { _lb_wheelCooling = false; }, 380);
+          }, { passive: false });
+
+          // —— 灯箱内部滑动 / 缩放 / 平移 / 双击 ——
+          //   规则（互斥，避免手势冲突）：
+          //   · 出现双指 → 进入 zoomMode：捏合缩放 + 之后单指平移图片
+          //   · zoomMode 内：单指移动 = 平移图片，不再触发左右切图
+          //   · 非 zoomMode：单指水平滑动 = 切换图片（原逻辑）
+          //   · 双击：在 1x 和 2x 之间切换，以点击位置为锚点
+          //   · 所有手指抬起：若 scale < 1 自动弹回 1x；zoomMode 清空但 scale 保留
+          function lbOnPointerDown(e) {
+            if (!overlay || !overlay.classList.contains('is-open')) return;
+            if (lb_switching) return;
+            // 忽略命中 prev/next/close 按钮的（这些按钮自己有监听器）
+            if (e.target && e.target !== overlay && e.target !== lbImg) return;
+
+            var pid = (typeof e.pointerId !== 'undefined') ? e.pointerId : 0;
+            _lb_pointers[pid] = { x: e.clientX, y: e.clientY };
+
+            var count = 0; for (var k in _lb_pointers) { if (_lb_pointers.hasOwnProperty(k)) count++; }
+
+            if (count >= 2) {
+              // ── 双指出现：永久进入缩放模式，本次手势结束前不再切图 ──
+              _lb_zoomMode = true;
+              _lb_dragOn = false;  // 不再走原滑动切图
+              _lb_axis = null;
+
+              // 记录初始双指距离、当前缩放、双指中心
+              var pts = []; for (var k2 in _lb_pointers) { if (_lb_pointers.hasOwnProperty(k2)) pts.push(_lb_pointers[k2]); }
+              var p0 = pts[0], p1 = pts[1];
+              var ddx = p1.x - p0.x, ddy = p1.y - p0.y;
+              _lb_zoomStartDist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+              _lb_zoomStartScale = lb_scale;
+              _lb_zoomStartTx = lb_tx; _lb_zoomStartTy = lb_ty;
+              _lb_zoomStartCx = (p0.x + p1.x) / 2;
+              _lb_zoomStartCy = (p0.y + p1.y) / 2;
+
+              try {
+                lbImg.classList.remove('is-switching', 'is-animating', 'is-closing');
+                lbImg.style.transition = 'none';
+              } catch (err) { }
+
+            } else {
+              // ── 单指 ──
+              if (_lb_zoomMode) {
+                // zoomMode 下：单指 = 平移（记录起点，move 里算位移）
+                _lb_dx0 = e.clientX;
+                _lb_dy0 = e.clientY;
+                try {
+                  lbImg.classList.remove('is-switching', 'is-animating', 'is-closing');
+                  lbImg.style.transition = 'none';
+                } catch (err) { }
+
+              } else if (lb_scale > 1.01) {
+                // 虽然不在 zoomMode，但图片已经被双击放大过了 → 平移
+                _lb_zoomMode = true;
+                _lb_dx0 = e.clientX;
+                _lb_dy0 = e.clientY;
+                try {
+                  lbImg.classList.remove('is-switching', 'is-animating', 'is-closing');
+                  lbImg.style.transition = 'none';
+                } catch (err) { }
+
+              } else {
+                // 正常模式：尝试走原水平滑动切图 + 双击判定
+                _lb_dragOn = true;
+                _lb_dx0 = e.clientX;
+                _lb_dy0 = e.clientY;
+                _lb_axis = null;
+
+                // 双击检测：两次 pointerdown 时间 < 280ms 且距离 < 20px
+                var now = Date.now ? Date.now() : new Date().getTime();
+                if (_lb_lastTapAt > 0 &&
+                  (now - _lb_lastTapAt) < DOUBLE_TAP_MS &&
+                  Math.abs(e.clientX - _lb_lastTapX) < DOUBLE_TAP_DIST &&
+                  Math.abs(e.clientY - _lb_lastTapY) < DOUBLE_TAP_DIST) {
+                  // 双击命中：切换 1x <-> DOUBLE_TAP_SCALE，以点击位置为锚点
+                  _lb_lastTapAt = 0; _lb_dragOn = false;
+                  var targetScale = (lb_scale > (1 + DOUBLE_TAP_SCALE) / 2) ? 1 : DOUBLE_TAP_SCALE;
+                  lbZoomTo(targetScale, e.clientX, e.clientY);
+                  return;
+                }
+                _lb_lastTapAt = now;
+                _lb_lastTapX = e.clientX;
+                _lb_lastTapY = e.clientY;
+              }
+            }
+          }
+
+          // 用带过渡的方式缩放到指定比例（以 cx, cy 为锚点）—— 双击用
+          function lbZoomTo(targetScale, cx, cy) {
+            targetScale = Math.max(LB_ZOOM_MIN, Math.min(LB_ZOOM_MAX, targetScale));
+            if (!lbImg) return;
+            try {
+              lbImg.classList.remove('is-switching', 'is-animating', 'is-closing');
+              // 先算锚点缩放对应的 tx/ty（保持锚点在视觉上不动）
+              var ratio = targetScale / lb_scale;
+              lb_tx = cx - (cx - lb_tx) * ratio;
+              lb_ty = cy - (cy - lb_ty) * ratio;
+              lb_scale = targetScale;
+              lbClampPan();
+              lbImg.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
+              applyZoomTransform();
+              // 过渡结束后清 transition
+              setTimeout(function () {
+                try { lbImg.style.transition = ''; } catch (e) { }
+              }, 250);
+              if (lb_scale <= 1.001) {
+                // 回到 1x 了，允许下次单指切图
+                setTimeout(function () { _lb_zoomMode = false; }, 260);
+              } else {
+                _lb_zoomMode = true;
+              }
+            } catch (err) { }
+          }
+
+          // 限制平移范围（图片放大后，边缘不能拖出黑框太多）
+          function lbClampPan() {
+            if (!lbImg) return;
+            var bigRect = lbImg.getBoundingClientRect();
+            // 图片实际显示尺寸（放缩后）
+            var dispW = bigRect.width, dispH = bigRect.height;
+            var vw = window.innerWidth || document.documentElement.clientWidth || 0;
+            var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+            // 允许的最大溢出量：最多 30% 拖出边界，拖过头会弹回
+            var extraX = Math.max(0, (dispW - vw) / 2);
+            var extraY = Math.max(0, (dispH - vh) / 2);
+            if (lb_scale <= 1.001) { lb_tx = 0; lb_ty = 0; return; }
+            // 简单限制：tx/ty 不超过 extra ± 缓冲
+            var buf = 40;
+            if (lb_tx > extraX + buf) lb_tx = extraX + buf;
+            if (lb_tx < -extraX - buf) lb_tx = -extraX - buf;
+            if (lb_ty > extraY + buf) lb_ty = extraY + buf;
+            if (lb_ty < -extraY - buf) lb_ty = -extraY - buf;
+          }
+
+          function lbOnPointerMove(e) {
+            var pid = (typeof e.pointerId !== 'undefined') ? e.pointerId : 0;
+            if (_lb_pointers && _lb_pointers.hasOwnProperty(pid)) {
+              _lb_pointers[pid] = { x: e.clientX, y: e.clientY };
+            }
+
+            var count = 0; for (var k in _lb_pointers) { if (_lb_pointers.hasOwnProperty(k)) count++; }
+
+            if (count >= 2) {
+              // ── 双指：缩放 ──
+              var pts = []; for (var k2 in _lb_pointers) { if (_lb_pointers.hasOwnProperty(k2)) pts.push(_lb_pointers[k2]); }
+              var p0 = pts[0], p1 = pts[1];
+              var ddx = p1.x - p0.x, ddy = p1.y - p0.y;
+              var dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+              var cx = (p0.x + p1.x) / 2, cy = (p0.y + p1.y) / 2;
+
+              // 新 scale = 起始 scale × (当前距 / 起始距)
+              var newScale = _lb_zoomStartScale * (dist / _lb_zoomStartDist);
+              newScale = Math.max(LB_ZOOM_MIN * 0.9, Math.min(LB_ZOOM_MAX * 1.05, newScale));
+              var ratio = newScale / _lb_zoomStartScale;
+
+              // 锚点保持：双指中心在屏幕上的位置，缩放前后都落在图片上同一点
+              lb_tx = _lb_zoomStartCx - (_lb_zoomStartCx - _lb_zoomStartTx) * ratio + (cx - _lb_zoomStartCx);
+              lb_ty = _lb_zoomStartCy - (_lb_zoomStartCy - _lb_zoomStartTy) * ratio + (cy - _lb_zoomStartCy);
+              lb_scale = newScale;
+              lbClampPan();
+              applyZoomTransform();
+
+            } else if (_lb_zoomMode && count === 1) {
+              // ── zoomMode 下单指：平移图片 ──
+              var dx = e.clientX - _lb_dx0;
+              var dy = e.clientY - _lb_dy0;
+              _lb_dx0 = e.clientX;
+              _lb_dy0 = e.clientY;
+              lb_tx += dx;
+              lb_ty += dy;
+              lbClampPan();
+              applyZoomTransform();
+
+            } else if (_lb_dragOn && count === 1) {
+              // ── 正常模式：原水平滑动切图 ──
+              var dx2 = e.clientX - _lb_dx0;
+              var dy2 = e.clientY - _lb_dy0;
+              if (!_lb_axis && (Math.abs(dx2) > 6 || Math.abs(dy2) > 6)) {
+                _lb_axis = (Math.abs(dx2) > Math.abs(dy2)) ? 'x' : 'y';
+                if (_lb_axis === 'x') {
+                  try {
+                    lbImg.classList.remove('is-switching', 'is-animating', 'is-closing');
+                    lbImg.style.transition = 'none';
+                  } catch (err) { }
+                }
+              }
+              if (_lb_axis !== 'x') return;
+              var shiftRatio = 0.45;
+              var opacity = 1 - Math.min(0.4, Math.abs(dx2) / Math.max(300, window.innerWidth * 0.8));
+              try {
+                lbImg.style.transform = 'translate(' + (dx2 * shiftRatio).toFixed(1) + 'px, 0) scale(1)';
+                lbImg.style.opacity = opacity.toFixed(3);
+              } catch (err) { }
+            }
+          }
+
+          function lbOnPointerUp(e) {
+            var pid = (typeof e.pointerId !== 'undefined') ? e.pointerId : 0;
+            if (_lb_pointers && _lb_pointers.hasOwnProperty(pid)) {
+              delete _lb_pointers[pid];
+            }
+
+            var count = 0; for (var k in _lb_pointers) { if (_lb_pointers.hasOwnProperty(k)) count++; }
+
+            if (count <= 1) {
+              // 从多指降到单指 / 0 指：如果当前 scale < 1 立刻弹回 1
+              if (lb_scale < 1) {
+                lb_scale = 1; lb_tx = 0; lb_ty = 0;
+                try {
+                  lbImg.style.transition = 'transform 200ms ease';
+                  applyZoomTransform();
+                  setTimeout(function () { try { lbImg.style.transition = ''; } catch (e2) { } }, 220);
+                } catch (e3) { }
+              }
+              if (count === 0) {
+                // 所有手指抬起：
+                // · 如果 scale > 1：下一次再放单指下来就进入平移（_lb_zoomMode 保留）
+                // · 如果 scale ≈ 1：下次单指允许切图
+                if (lb_scale <= 1.001) { _lb_zoomMode = false; }
+              }
+            }
+
+            if (_lb_dragOn && !_lb_zoomMode) {
+              // 原滑动切图判定（只在非 zoomMode、dragOn=true 时）
+              _lb_dragOn = false;
+              var dx = e.clientX - _lb_dx0;
+              var dir = 0;
+              if (_lb_axis === 'x') {
+                var threshold = Math.min(window.innerWidth * 0.12, 60);
+                if (dx < -threshold) dir = 1;
+                else if (dx > threshold) dir = -1;
+              }
+              try {
+                lbImg.style.transition = '';
+                lbImg.style.transform = '';
+                lbImg.style.opacity = '';
+              } catch (err) { }
+
+              if (dir !== 0) {
+                goLightbox(dir);
+                try {
+                  _lb_blockCloseClickUntil = (Date.now ? Date.now() : new Date().getTime()) + 320;
+                } catch (err) { }
+              }
+            }
+          }
+          overlay.addEventListener('pointerdown', lbOnPointerDown, true);
+          overlay.addEventListener('pointermove', lbOnPointerMove, true);
+          overlay.addEventListener('pointerup', lbOnPointerUp, true);
+          overlay.addEventListener('pointercancel', lbOnPointerUp, true);
+          overlay.addEventListener('pointerleave', function (e) {
+            if (_lb_dragOn) lbOnPointerUp(e);
+          }, true);
+        }
+
+        // 记录「当前是从哪张小图放大的」—— 关闭时能精准飞回原位
+        var lastSourceRect = null;
+
+        // ──────────────────────────────────────────────────────────────
+        // 同组切换图片（+1 = 下一张，-1 = 上一张，循环）
+        // 动画：旧图先往「去向方向」滑出 + 淡出 → 换 src → 新图从「来源方向」滑入 + 淡入
+        // ──────────────────────────────────────────────────────────────
+        function goLightbox(dir) {
+          if (!overlay || !overlay.classList.contains('is-open')) return;
+          if (lb_switching) return;
+          if (!lb_stack || lb_N <= 1) return;
+          // 切图前重置缩放：新的一张永远是 1x 居中显示
+          resetZoom();
+          var newIdx = ((lb_curIdx + dir) % lb_N + lb_N) % lb_N;
+          if (newIdx === lb_curIdx) return;
+          lb_switching = true;
+
+          var newCard = lb_cards[newIdx];
+          var newImgEl = newCard ? newCard.querySelector('img') : null;
+          if (!newImgEl) { lb_switching = false; return; }
+
+          // 方向 → 位移值（用视口宽度的 30%，足够离开屏幕但又不夸张）
+          var OFFSET = Math.max(60, Math.floor(window.innerWidth * 0.30));
+          // dir=+1(下一张): 旧图 -OFFSET 左出，新图 +OFFSET 右进
+          // dir=-1(上一张): 旧图 +OFFSET 右出，新图 -OFFSET 左进
+          var outX = (dir > 0) ? -OFFSET : OFFSET;
+          var inX = (dir > 0) ? OFFSET : -OFFSET;
+
+          // 阶段 1：旧图滑出 + 淡出（走 is-switching 过渡）
+          lbImg.classList.add('is-switching');
+          lbImg.style.transform = 'translate(' + outX + 'px, 0) scale(1)';
+          lbImg.style.opacity = '0.2';
+
+          // 等 300ms（过渡时长）后换 src
+          setTimeout(function () {
+            // 新 src 更新
+            var newSrc = newImgEl.currentSrc || newImgEl.src;
+            lbImg.alt = newImgEl.alt || '';
+            lbImg.src = newSrc;
+
+            // 更新索引 + 计数器 + 飞回目标（关闭时要落到新卡片的位置）
+            lb_curIdx = newIdx;
+            updateCounter();
+            try { lastSourceRect = newImgEl.getBoundingClientRect(); } catch (err) { }
+
+            // 阶段 2：瞬间把图放到「进入方向的起始位置」（无 transition）
+            lbImg.classList.remove('is-switching');
+            lbImg.style.transition = 'none';
+            lbImg.style.transform = 'translate(' + inX + 'px, 0) scale(1)';
+            lbImg.style.opacity = '0.2';
+            void lbImg.offsetWidth;  // 强制 reflow
+
+            // 阶段 3：重新打开 transition → 滑到屏幕中央 + 淡入
+            lbImg.classList.add('is-switching');
+            lbImg.style.transition = '';   // 用 CSS .is-switching 那条过渡
+            lbImg.style.transform = 'translate(0, 0) scale(1)';
+            lbImg.style.opacity = '1';
+
+            // 动画结束：移除 is-switching（避免影响关闭时的 FLIP 过渡）
+            setTimeout(function () {
+              lbImg.classList.remove('is-switching');
+              lbImg.style.transform = '';
+              lbImg.style.opacity = '';
+              lb_switching = false;
+            }, 320);
+          }, 300);
+        }
+
+        function openLightbox(smallImgEl) {
+          ensureDom();
+          if (overlay.classList.contains('is-open')) return; // 已经开着就别叠
+
+          // —— 找到「这张图所在的组」和「它是同组的第几张」——
+          //    灯箱里要切同组图片，这两个信息是必须的。
+          var cardEl = null;
+          var stackEl = null;
+          if (smallImgEl.closest) {
+            cardEl = smallImgEl.closest('.card');
+            stackEl = smallImgEl.closest('.stack');
+          } else {
+            var walk = smallImgEl;
+            while (walk) {
+              if (!cardEl && walk.classList && walk.classList.contains('card')) cardEl = walk;
+              if (!stackEl && walk.classList && walk.classList.contains('stack')) stackEl = walk;
+              if (cardEl && stackEl) break;
+              walk = walk.parentElement;
+            }
+          }
+          if (stackEl) {
+            lb_stack = stackEl;
+            lb_cards = Array.prototype.slice.call(stackEl.querySelectorAll('.card'));
+            lb_N = lb_cards.length;
+            if (cardEl) {
+              var idx = lb_cards.indexOf(cardEl);
+              lb_curIdx = (idx >= 0) ? idx : 0;
+            } else {
+              lb_curIdx = 0;
+            }
+          } else {
+            // 极端兜底：找不到 stack（比如 resolveLightboxImg 用了最宽松的 fallback 选图）
+            // → 就当成「只有 1 张」，不显示切换按钮
+            lb_stack = null;
+            lb_cards = null;
+            lb_N = 1;
+            lb_curIdx = 0;
+          }
+          lb_switching = false;
+          updateCounter();
+
+          // FLIP 第一步：记下小图在屏幕上的精确位置 + 尺寸（不动点）
+          var rect = smallImgEl.getBoundingClientRect();
+          lastSourceRect = rect;
+
+          var src = smallImgEl.currentSrc || smallImgEl.src;
+          lbImg.alt = smallImgEl.alt || '';
+
+          // —— 防闪烁关键：在 DOM 变可见之前，用内联样式把毛玻璃层和即将出现的大图都锁成透明
+          //    否则 is-open class 一加，CSS 规则 .is-open { opacity:1 } 会让毛玻璃先闪一帧，
+          //    然后大图还在解码时屏幕中间会多一个没像素的占位图再跳一下。
+          overlay.style.opacity = '0';
+          lbImg.style.opacity = '0';
+
+          // 先把遮罩 display:flex 打开、底图位置锁定，但不显示（先让浏览器算出大图的最终尺寸）
+          overlay.classList.add('is-open');
+          document.body.classList.add('lightbox-open');
+
+          // —— 关键优化：等大图像素解码完成（ready / complete）后再启动放大动画 ——
+          //    否则会出现「小位置那里是个白框 → 突然跳到大图再动」的生硬感。
+          //    解码完成后，动画的起点就是那张完整的大图，只是大小/位置和小图一致，
+          //    用户会看到「从小图的形状/位置平滑放大到全屏」，完全没有跳跃。
+          lbImg.src = src;
+
+          function beginZoom() {
+            // FLIP 第二步：拿到最终大图在屏幕中央的精确位置 + 尺寸
+            var bigRect = lbImg.getBoundingClientRect();
+            if (bigRect.width === 0 || bigRect.height === 0) {
+              // 容器还没布局，稍后再试一次
+              requestAnimationFrame(beginZoom);
+              return;
+            }
+
+            var scaleX = rect.width / bigRect.width;
+            var scaleY = rect.height / bigRect.height;
+            var avgScale = (scaleX + scaleY) / 2;
+            var tx = (rect.left + rect.width / 2) - (bigRect.left + bigRect.width / 2);
+            var ty = (rect.top + rect.height / 2) - (bigRect.top + bigRect.height / 2);
+
+            // 准备动画状态：
+            //  - 图片 opacity 从 0 → 1 瞬间切（no transition on opacity!）
+            //    同时 transform 把它平移缩放回和卡片一模一样的位置 + 大小
+            //  - 用户视觉上：刚刚卡片上的那张图"从原地"开始放大，没有任何断层感
+            //  - 毛玻璃 overlay 从 opacity 0（已经是 0 了）→ 接下来 transition 到 1，
+            //    和图片放大同步进行
+            lbImg.classList.remove('is-closing');
+            lbImg.classList.add('is-animating');
+            // 先关闭 transition：瞬间跳到"起始姿势"（小卡片位置 + 大小），否则 CSS transition 会
+            // 从屏幕中心的位置做一次"倒放动画"，那就是用户看到的"生硬跳转"根源！
+            lbImg.style.transition = 'none';
+            overlay.style.transition = 'none';
+            overlay.style.opacity = '0';
+            lbImg.style.opacity = '1';
+            lbImg.style.transform =
+              'translate(' + tx.toFixed(3) + 'px,' + ty.toFixed(3) + 'px) ' +
+              'scale(' + avgScale.toFixed(4) + ')';
+
+            // 强制 reflow —— 让起始状态被"焊"在当前帧
+            void lbImg.offsetWidth;
+
+            // 重新打开 transition（CSS class 的 transform 过渡就生效了）
+            lbImg.style.transition = '';
+            overlay.style.transition = '';
+
+            // 最终状态：回到屏幕中心大图尺寸（translate(0,0) scale(1)），同时毛玻璃变不透明
+            overlay.style.opacity = '1';
+            lbImg.style.transform = 'translate(0,0) scale(1)';
+          }
+
+          // 现代浏览器 / 微信 7.0+：img.decode() 返回 Promise，精准确认像素已解码可用
+          var decoded = false;
+          if (lbImg.decode && typeof lbImg.decode === 'function') {
+            lbImg.decode().then(function () { decoded = true; beginZoom(); })
+              .catch(function () { if (!decoded) { decoded = true; beginZoom(); } });
+          }
+          // 兜底：如果 decode 不可用 / 超时，就用 complete 判断或 load 事件
+          function fallbackReady() {
+            if (decoded) return;
+            decoded = true;
+            beginZoom();
+          }
+          if (lbImg.complete && lbImg.naturalWidth > 0) {
+            // 已经缓存就绪（如之前打开过同一图）— 立刻开始，不等 decode
+            decoded = true;
+            beginZoom();
+          } else {
+            lbImg.addEventListener('load', fallbackReady, { once: true });
+            lbImg.addEventListener('error', fallbackReady, { once: true });
+            setTimeout(fallbackReady, 2500);  // 极端兜底，2.5 秒后不管怎样都要开
+          }
+        }
+
+        function closeLightbox() {
+          if (!overlay || !overlay.classList.contains('is-open')) return;
+
+          // 关闭前重置缩放：让 FLIP 飞回时按 1x 的真实尺寸算 bigRect，不然会飞歪
+          resetZoom();
+          try { lbImg.style.transition = ''; } catch (e) { }
+
+          // 飞回到打开时那张小卡片的位置（如果小卡片被用户划走了也没关系，rect 记录的是它当时的坐标）
+          var rect = lastSourceRect;
+
+          // ★ 关键：如果用户在灯箱里切到了「另外一张」（例如从第 1 张切到第 3 张），
+          //   那么 lastSourceRect 还是"第 3 张卡片被压在堆栈下面时的旧 rect"
+          //   （因为它在下层，有 0.95 缩放 + 18px/10px 位移 + 变暗，不是顶层的位置）。
+          //   我们要让它精确落到"同组卡片在顶层显示时"的位置（也就是 active/l0 的位置，
+          //   因为同一组卡片大小完全一样），这样"关完后，顶层卡片立刻变成第 3 张"就无缝衔接。
+          var syncTargetStack = null;
+          var syncTargetIdx = -1;
+          if (lb_stack && typeof lb_stack._jumpTo === 'function') {
+            var activeCard = lb_stack.querySelector('.card.active') || lb_stack.querySelector('.card.l0');
+            if (activeCard) {
+              var ar = activeCard.getBoundingClientRect();
+              if (ar && (ar.width > 0 || ar.height > 0)) rect = ar;
+            }
+            syncTargetStack = lb_stack;
+            syncTargetIdx = lb_curIdx;
+          }
+
+          // ── ★ 时机 ①：灯箱放大图「起飞前」就同步 stack 并加过渡 ──────────────
+          //    这样灯箱飞出的 0.35s 内，stack 内部所有卡片也同步平滑重排：
+          //    新目标卡片从下层（l1/l2）"升上来"变成顶层 l0，旧卡片滑下去。
+          //    0.35s 后放大图正好落到新卡片所在的顶层位置，用户看不到任何闪现。
+          if (syncTargetStack && syncTargetIdx >= 0) {
+            try { syncTargetStack.classList.add('is-syncing'); } catch (e) { }
+            try { syncTargetStack._jumpTo(syncTargetIdx); } catch (e) { }
+          }
+
+          var bigRect = lbImg.getBoundingClientRect();
+
+          if (rect && (rect.width > 0 || rect.height > 0)) {
+            var scaleX = rect.width / bigRect.width;
+            var scaleY = rect.height / bigRect.height;
+            var tx = (rect.left + rect.width / 2) - (bigRect.left + bigRect.width / 2);
+            var ty = (rect.top + rect.height / 2) - (bigRect.top + bigRect.height / 2);
+
+            lbImg.classList.add('is-closing');
+            // 从当前的 translate(0,0) scale(1) → 飞回小卡片位置/尺寸
+            lbImg.style.transform =
+              'translate(' + tx.toFixed(3) + 'px,' + ty.toFixed(3) + 'px) ' +
+              'scale(' + ((scaleX + scaleY) / 2).toFixed(4) + ')';
+            lbImg.style.opacity = '1';  // 全程可见，无缝落回卡片上
+          } else {
+            // 找不到原位置（极端情况）：轻微缩小 + 淡出，至少不跳
+            lbImg.classList.add('is-closing');
+            lbImg.style.transform = 'scale(0.92)';
+            lbImg.style.opacity = '0';
+          }
+
+          // 毛玻璃同步淡出（和缩放时长一致）
+          overlay.style.opacity = '0';
+
+          var DURATION = 350;  // 与 CSS is-closing transform 时长接近，留一点安全余量
+          var _stackCleanClass = syncTargetStack;
+          setTimeout(function () {
+            overlay.classList.remove('is-open');
+            overlay.style.opacity = '';
+            document.body.classList.remove('lightbox-open');
+
+            lbImg.classList.remove('is-animating', 'is-closing', 'is-switching');
+            lbImg.style.transition = '';
+            lbImg.style.transform = '';
+            lbImg.style.opacity = '';
+            lbImg.removeAttribute('src');
+
+            lb_switching = false;
+
+            // ── ★ 时机 ②：0.35s 过渡完成，清理临时 is-syncing class ──
+            //    _jumpTo 已经在「起飞前」同步调用过了，这里不能再调，否则会再切一次。
+            if (_stackCleanClass) {
+              try { _stackCleanClass.classList.remove('is-syncing'); } catch (e) { }
+            }
+          }, DURATION);
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // 触发方式：推翻之前的「自建 down/move/up 检测器」，改回用浏览器原生 click 事件。
+        //
+        // 为什么上一版自建检测器在用户真实手机上老失灵？
+        //   1. stack.onPointerDown 里有 e.stopPropagation() + setPointerCapture，
+        //      会打乱 pointer / mouse / touch 三套事件在某些浏览器/某些安卓版本
+        //      下的派发顺序，导致 onDown 根本没收到、或 dragCanceled 永远 true。
+        //   2. 自建判定的阈值、打标时机、互斥窗口「叠」得太复杂，真实设备下
+        //      只要一步顺序错了就整锅翻车。
+        //
+        // —— 最终方案（最简单、同时也最稳）：
+        //   A. 点击判定：**全靠 document click 监听器**（浏览器帮你做好所有「什么是
+        //      一次点击」的判断，包括 preventDefault、位移、起终点一致性等——人家在
+        //      Win/Mac/iOS/Android/微信上跑了十几年，比我手写的靠谱一万倍）。
+        //   B. 防滑动误触：stack 的滑动手势代码里，「手势真正开始拖动（dx>12 且水平）
+        //      或真的触发 go() 切换」时，就写一个全局时间戳 __lb_blockNextClickUntil
+        //      = now + 350ms（足够覆盖浏览器把 click 派发出来的时间窗口）。
+        //   C. 在 click 监听器开头，如果 now < blockUntil，就直接 return，
+        //      不放大。这就把「滑动手势后的 click」100% 拦掉了。
+        //
+        //   为什么能拦住「第二张图」那个老 bug？
+        //     滑动结束 = commit() 写了 blockUntil，350ms 内 click 全毙。
+        //     「切到第二张 → click 冒泡 → 取 active img」那套流程，发生时间点
+        //     就在松手后的 0~100ms 内，正好撞进 blockUntil 窗口。
+        //   为什么单击反而能放大？
+        //     真正的单击：没有拖动 → 滑动手势那边根本不会写 blockUntil →
+        //     click 直接命中 → 放大。完美对应人类的直觉。
+        // ════════════════════════════════════════════════════════════════
+
+        function isCardImg(el) {
+          return !!(el && el.tagName === 'IMG' &&
+            el.parentElement && el.parentElement.classList &&
+            el.parentElement.classList.contains('card'));
+        }
+
+        // ★ 命中目标解析器（防各种浏览器/微信 X5 的「点 img 却把事件派到父容器」的怪癖）
+        function resolveLightboxImg(tapTargetEl) {
+          if (!tapTargetEl) return null;
+          if (isCardImg(tapTargetEl)) return tapTargetEl;
+
+          var card, stack;
+          if (tapTargetEl.closest) {
+            card = tapTargetEl.closest('.card');
+            stack = tapTargetEl.closest('.stack');
+          } else {
+            var n = tapTargetEl;
+            while (n) {
+              if (!card && n.classList && n.classList.contains('card')) card = n;
+              if (!stack && n.classList && n.classList.contains('stack')) stack = n;
+              if (card && stack) break;
+              n = n.parentElement;
+            }
+          }
+          if (card) {
+            var imgA = card.querySelector('img');
+            if (imgA) return imgA;
+          }
+          if (stack) {
+            var imgB = stack.querySelector('.card.active img') ||
+              stack.querySelector('.card.l0 img') ||
+              stack.querySelector('.card img');
+            if (imgB) return imgB;
+          }
+          return null;
+        }
+
+        // —— 滑动 vs 点击 互斥锁（极简版）
+        //    blockUntil 有效期间内的 click 一律视为「滑动后遗漏的 click 事件」→ 跳过。
+        //    正常的单击：因为没达到过「dx≥12 的水平拖拽」，blockUntil 不会被写 → 直接放大。
+        function clickBlocked() {
+          try {
+            var t = window.__lb_blockNextClickUntil;
+            if (!t) return false;
+            var now = Date.now ? Date.now() : new Date().getTime();
+            return now < t;
+          } catch (err) { return false; }
+        }
+
+        document.addEventListener('click', function (e) {
+          // 1) 在互斥窗口内 → 一定是刚才滑动手势剩下来的 click，不开灯箱
+          if (clickBlocked()) return;
+
+          var imgEl = resolveLightboxImg(e.target);
+          if (imgEl) {
+            // 防止 click 冒泡触发 a 标签跳转（将来如果包了 a）
+            if (e.cancelable) { try { e.preventDefault(); } catch (err) { } }
+            openLightbox(imgEl);
+          }
+        }, false);
+      })();
+    })();
+  </script>
+
+</body>
+
+</html>
